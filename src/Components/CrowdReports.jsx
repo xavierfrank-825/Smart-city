@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Edit2, Trash2, X, Check } from 'lucide-react';
 
 // 🔥 API FIX — always use Render backend
-const API_BASE = "https://backend-7bhh.onrender.com";
+const API_BASE = "https://backend-7bhh.onrender.com/api";
 
 const styles = {
   heading: {
