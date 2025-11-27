@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Edit2, Trash2, X, Check } from 'lucide-react';
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8000/api';
+// 🔥 API FIX — always use Render backend
+const API_BASE = "https://backend-7bhh.onrender.com/api";
 
 const styles = {
   heading: {
@@ -175,17 +176,7 @@ const CrowdReports = ({ city, lat, lon }) => {
       const res = await axios.get(`${API_BASE}/reports/`, { params: { city } });
       setReports(res.data);
     } catch (e) {
-      console.error('Error fetching reports:', e);
-      if (e.response) {
-        // Server responded with error
-        setError(`Failed to load reports: ${e.response.status} ${e.response.statusText}`);
-      } else if (e.request) {
-        // Request made but no response
-        setError(`Cannot connect to backend. Make sure the server is running at ${API_BASE}`);
-      } else {
-        // Something else happened
-        setError(`Failed to load reports: ${e.message}`);
-      }
+      setError("Cannot connect to backend.");
     } finally {
       setLoading(false);
     }
@@ -193,24 +184,12 @@ const CrowdReports = ({ city, lat, lon }) => {
 
   useEffect(() => {
     if (city) {
-      // Test backend connection first
-      const testConnection = async () => {
-        try {
-          await axios.get(`${API_BASE}/health/`);
-        } catch (e) {
-          console.warn('Backend health check failed:', e);
-          setError(`Cannot connect to backend at ${API_BASE}. Make sure the Django server is running on port 8000.`);
-        }
-      };
-      testConnection();
       fetchReports();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [city]);
 
   const submitReport = async (e) => {
     e.preventDefault();
-    setError(null);
     try {
       await axios.post(`${API_BASE}/reports/`, {
         nickname,
@@ -224,22 +203,17 @@ const CrowdReports = ({ city, lat, lon }) => {
       setNickname('');
       fetchReports();
     } catch (e) {
-      console.error('Error submitting report:', e);
-      setError(e.response?.data?.detail || e.response?.statusText || 'Failed to submit report');
+      setError("Failed to submit report");
     }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this report?')) {
-      return;
-    }
+    if (!window.confirm('Are you sure you want to delete?')) return;
     try {
-      setError(null);
       await axios.delete(`${API_BASE}/reports/${id}/`);
       fetchReports();
     } catch (e) {
-      console.error('Error deleting report:', e);
-      setError(e.response?.data?.detail || e.response?.statusText || 'Failed to delete report');
+      setError("Failed to delete report");
     }
   };
 
@@ -259,7 +233,6 @@ const CrowdReports = ({ city, lat, lon }) => {
 
   const handleUpdate = async (id) => {
     try {
-      setError(null);
       await axios.put(`${API_BASE}/reports/${id}/`, {
         ...editForm,
         latitude: lat,
@@ -267,11 +240,9 @@ const CrowdReports = ({ city, lat, lon }) => {
         city,
       });
       setEditingId(null);
-      setEditForm({ nickname: '', condition: '', message: '' });
       fetchReports();
     } catch (e) {
-      console.error('Error updating report:', e);
-      setError(e.response?.data?.detail || e.response?.statusText || 'Failed to update report');
+      setError("Failed to update report");
     }
   };
 
@@ -289,11 +260,7 @@ const CrowdReports = ({ city, lat, lon }) => {
           />
         </div>
 
-        <select
-          value={condition}
-          onChange={(e) => setCondition(e.target.value)}
-          style={styles.select}
-        >
+        <select value={condition} onChange={(e) => setCondition(e.target.value)} style={styles.select}>
           <option value="rain">Rain</option>
           <option value="sunny">Sunny</option>
           <option value="cloudy">Cloudy</option>
@@ -307,15 +274,10 @@ const CrowdReports = ({ city, lat, lon }) => {
           <button
             type="submit"
             style={styles.button}
-            onMouseOver={(e) => {
-              Object.assign(e.currentTarget.style, styles.buttonHover);
-            }}
-            onMouseOut={(e) => {
-              Object.assign(e.currentTarget.style, {
-                transform: 'none',
-                boxShadow: 'none',
-              });
-            }}
+            onMouseOver={(e) => Object.assign(e.currentTarget.style, styles.buttonHover)}
+            onMouseOut={(e) =>
+              Object.assign(e.currentTarget.style, { transform: 'none', boxShadow: 'none' })
+            }
           >
             Submit report
           </button>
@@ -324,7 +286,7 @@ const CrowdReports = ({ city, lat, lon }) => {
         <div style={styles.fullRow}>
           <input
             required
-            placeholder="What are you seeing now? (e.g., 'Light rain, roads wet')"
+            placeholder="What are you seeing now?"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             style={styles.input}
@@ -336,6 +298,10 @@ const CrowdReports = ({ city, lat, lon }) => {
       {loading && <p style={styles.loading}>Loading reports...</p>}
 
       <ul style={styles.list}>
+        {reports.length === 0 && !loading && (
+          <p style={styles.empty}>No reports yet for this city. Be the first!</p>
+        )}
+
         {reports.map((r) => (
           <li key={r.id} style={styles.item}>
             {editingId === r.id ? (
@@ -343,14 +309,19 @@ const CrowdReports = ({ city, lat, lon }) => {
                 <div style={styles.editForm}>
                   <input
                     type="text"
-                    placeholder="Nickname (optional)"
+                    placeholder="Nickname"
                     value={editForm.nickname}
-                    onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, nickname: e.target.value })
+                    }
                     style={styles.editInput}
                   />
+
                   <select
                     value={editForm.condition}
-                    onChange={(e) => setEditForm({ ...editForm, condition: e.target.value })}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, condition: e.target.value })
+                    }
                     style={styles.editSelect}
                   >
                     <option value="rain">Rain</option>
@@ -361,29 +332,30 @@ const CrowdReports = ({ city, lat, lon }) => {
                     <option value="fog">Fog</option>
                     <option value="other">Other</option>
                   </select>
+
                   <input
                     type="text"
                     placeholder="Message"
                     value={editForm.message}
-                    onChange={(e) => setEditForm({ ...editForm, message: e.target.value })}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, message: e.target.value })
+                    }
                     style={styles.editInput}
                     required
                   />
                 </div>
+
                 <div style={styles.itemActions}>
                   <button
                     onClick={() => handleUpdate(r.id)}
                     style={{ ...styles.actionButton, ...styles.saveButton }}
-                    onMouseOver={(e) => e.target.style.opacity = '0.9'}
-                    onMouseOut={(e) => e.target.style.opacity = '1'}
                   >
                     <Check size={14} /> Save
                   </button>
+
                   <button
                     onClick={handleCancelEdit}
                     style={{ ...styles.actionButton, ...styles.cancelButton }}
-                    onMouseOver={(e) => e.target.style.opacity = '0.9'}
-                    onMouseOut={(e) => e.target.style.opacity = '1'}
                   >
                     <X size={14} /> Cancel
                   </button>
@@ -392,26 +364,25 @@ const CrowdReports = ({ city, lat, lon }) => {
             ) : (
               <>
                 <p style={styles.itemHeader}>
-                  <strong>{r.nickname || 'Anonymous'}</strong> – {r.condition.toUpperCase()}
+                  <strong>{r.nickname || 'Anonymous'}</strong> –{' '}
+                  {r.condition.toUpperCase()}
                 </p>
                 <p style={styles.itemMessage}>{r.message}</p>
                 <p style={styles.itemMeta}>
                   {new Date(r.created_at).toLocaleTimeString()} • {r.city}
                 </p>
+
                 <div style={styles.itemActions}>
                   <button
                     onClick={() => handleEdit(r)}
                     style={{ ...styles.actionButton, ...styles.editButton }}
-                    onMouseOver={(e) => e.target.style.opacity = '0.9'}
-                    onMouseOut={(e) => e.target.style.opacity = '1'}
                   >
                     <Edit2 size={14} /> Edit
                   </button>
+
                   <button
                     onClick={() => handleDelete(r.id)}
                     style={{ ...styles.actionButton, ...styles.deleteButton }}
-                    onMouseOver={(e) => e.target.style.opacity = '0.9'}
-                    onMouseOut={(e) => e.target.style.opacity = '1'}
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -420,14 +391,9 @@ const CrowdReports = ({ city, lat, lon }) => {
             )}
           </li>
         ))}
-        {reports.length === 0 && !loading && (
-          <p style={styles.empty}>No reports yet for this city. Be the first!</p>
-        )}
       </ul>
     </div>
   );
 };
 
 export default CrowdReports;
-
-
