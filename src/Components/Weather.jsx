@@ -1175,7 +1175,7 @@ const SmartCityDashboard = () => {
       <div style={styles.maxWidth}>
         <div style={styles.footer}>
           <p style={styles.footerText}>
-            Data sources: Open-Meteo Weather API • Open-Meteo Air Quality API • Auto-refreshes every 5 minutes
+            {/* Data sources: Open-Meteo Weather API • Open-Meteo Air Quality API • Auto-refreshes every 5 minutes */}
           </p>
         </div>
       </div>
