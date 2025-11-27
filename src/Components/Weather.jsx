@@ -1,6 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { Cloud, Droplets, Wind, Eye, Gauge, Sun, Moon, CloudRain, CloudSnow, Zap, Navigation, Thermometer, Activity, AlertCircle, TrendingUp, MapPin } from 'lucide-react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+import {
+  Cloud,
+  Droplets,
+  Wind,
+  Eye,
+  Gauge,
+  Sun,
+  Moon,
+  CloudRain,
+  CloudSnow,
+  Zap,
+  Navigation,
+  Thermometer,
+  Activity,
+  AlertCircle,
+  TrendingUp,
+  MapPin,
+} from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
+} from 'recharts';
+import CrowdReports from './CrowdReports';
 
 const SmartCityDashboard = () => {
   const [selectedCity, setSelectedCity] = useState('Delhi');
@@ -31,7 +65,7 @@ const SmartCityDashboard = () => {
     
     try {
       const weatherResponse = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m,cloud_cover,pressure_msl&hourly=temperature_2m,relative_humidity_2m,precipitation_probability&timezone=Asia/Kolkata&forecast_days=1`
+        `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m,cloud_cover,pressure_msl,uv_index&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,uv_index&timezone=Asia/Kolkata&forecast_days=1`
       );
       const weatherJson = await weatherResponse.json();
       
@@ -99,6 +133,296 @@ const SmartCityDashboard = () => {
       { name: 'O₃', value: airQuality.current.ozone || 0, color: '#22c55e' },
       { name: 'CO', value: (airQuality.current.carbon_monoxide || 0) / 10, color: '#3b82f6' }
     ];
+  };
+
+  const computeComfortScore = (temp, humidity) => {
+    if (temp == null || humidity == null) return 50;
+
+    const idealTemp = 24;
+    const idealHum = 50;
+
+    const tempPenalty = Math.min(40, Math.abs(temp - idealTemp) * 3);
+    const humPenalty = Math.min(40, Math.abs(humidity - idealHum) * 1.2);
+
+    const raw = 100 - (tempPenalty + humPenalty);
+    return Math.max(0, Math.min(100, Math.round(raw)));
+  };
+
+  const calculateIndoorComfort = (current) => {
+    if (!current) {
+      return {
+        score: 50,
+        recommendation: 'Waiting for data...',
+      };
+    }
+
+    const temp = current.temperature_2m;
+    const humidity = current.relative_humidity_2m;
+    const score = computeComfortScore(temp, humidity);
+
+    let recommendation = '';
+
+    if (score >= 80) {
+      recommendation =
+        'Very comfortable. You can keep windows slightly open and use fan at low speed.';
+    } else if (score >= 60) {
+      recommendation =
+        'Moderately comfortable. Fan at medium speed; AC optional if you feel warm.';
+    } else if (score >= 40) {
+      recommendation =
+        'A bit uncomfortable. Consider closing curtains and using fan/AC.';
+    } else {
+      recommendation =
+        'Uncomfortable conditions. Use AC (or strongest ventilation) and keep windows mostly closed.';
+    }
+
+    return { score, recommendation };
+  };
+
+  const getHourlyComfortSeries = () => {
+    if (!weatherData?.hourly) return [];
+
+    return weatherData.hourly.time.slice(0, 24).map((time, idx) => {
+      const temp = weatherData.hourly.temperature_2m[idx];
+      const hum = weatherData.hourly.relative_humidity_2m[idx];
+      const uv = weatherData.hourly.uv_index?.[idx] || 0;
+      return {
+        time,
+        hour: new Date(time).getHours(),
+        temperature: temp,
+        humidity: hum,
+        uv: uv,
+        comfort: computeComfortScore(temp, hum),
+        precipitation: weatherData.hourly.precipitation_probability[idx],
+      };
+    });
+  };
+
+  const suggestBestHours = (series, filterFn, label) => {
+    if (!series.length) return null;
+
+    const filtered = series.filter(filterFn).sort((a, b) => b.comfort - a.comfort);
+
+    if (!filtered.length) return null;
+
+    const best = filtered[0];
+    return {
+      label,
+      hour: `${best.hour}:00`,
+      comfort: best.comfort,
+    };
+  };
+
+  const getLifeAssistantSuggestions = () => {
+    const series = getHourlyComfortSeries();
+    if (!series.length) return [];
+
+    const suggestions = [];
+
+    const run = suggestBestHours(
+      series,
+      (h) =>
+        h.temperature >= 15 &&
+        h.temperature <= 28 &&
+        h.humidity <= 70 &&
+        h.precipitation < 30,
+      'Best time to run',
+    );
+    if (run) suggestions.push(run);
+
+    const walk = suggestBestHours(
+      series,
+      (h) => h.temperature >= 18 && h.temperature <= 32 && h.comfort >= 60,
+      'Best time for a walk',
+    );
+    if (walk) suggestions.push(walk);
+
+    const study = suggestBestHours(
+      series,
+      (h) => h.temperature >= 20 && h.temperature <= 30 && h.comfort >= 65,
+      'Best outdoor study time',
+    );
+    if (study) suggestions.push(study);
+
+    const travel = suggestBestHours(
+      series,
+      (h) => h.precipitation < 40 && h.comfort >= 55,
+      'Best time to travel',
+    );
+    if (travel) suggestions.push(travel);
+
+    // Best time to dry clothes - needs UV, low humidity, wind, no rain
+    const dryClothes = suggestBestHours(
+      series,
+      (h) => {
+        const uv = weatherData?.hourly?.uv_index?.[series.indexOf(h)] || 0;
+        return h.humidity <= 60 && h.precipitation < 20 && uv > 2 && h.temperature >= 20;
+      },
+      'Best time to dry clothes',
+    );
+    if (dryClothes) suggestions.push(dryClothes);
+
+    return suggestions;
+  };
+
+  const calculateActivityScores = () => {
+    const current = weatherData?.current;
+    if (!current || !airQuality?.current) return [];
+
+    const temp = current.temperature_2m;
+    const humidity = current.relative_humidity_2m;
+    const wind = current.wind_speed_10m;
+    const pm25 = airQuality.current.pm2_5 || 0;
+    const uv = current.uv_index || 0;
+
+    const baseComfort = computeComfortScore(temp, humidity);
+
+    const airPenalty = pm25 <= 35 ? 0 : pm25 <= 55 ? 10 : pm25 <= 150 ? 25 : 40;
+    const safeComfort = Math.max(0, baseComfort - airPenalty);
+
+    const score = (modifier) => {
+      const s = Math.max(0, Math.min(100, Math.round(safeComfort + modifier)));
+      return s;
+    };
+
+    return [
+      {
+        name: 'Running',
+        score: score(
+          (temp >= 18 && temp <= 26 ? 5 : -10) +
+            (humidity <= 70 ? 5 : -5) +
+            (wind >= 5 && wind <= 20 ? 5 : 0) -
+            (uv > 8 ? 10 : uv > 6 ? 5 : 0),
+        ),
+      },
+      {
+        name: 'Cycling',
+        score: score(
+          (temp >= 15 && temp <= 28 ? 8 : -8) +
+            (humidity <= 70 ? 5 : -5) +
+            (wind >= 3 && wind <= 20 ? 5 : wind > 25 ? -10 : 0) -
+            (uv > 8 ? 10 : uv > 6 ? 5 : 0),
+        ),
+      },
+      {
+        name: 'Walking',
+        score: score(
+          (temp >= 18 && temp <= 32 ? 8 : -5) + (humidity <= 75 ? 3 : -3) -
+            (uv > 8 ? 8 : uv > 6 ? 4 : 0),
+        ),
+      },
+      {
+        name: 'Outdoor Study',
+        score: score(
+          (temp >= 20 && temp <= 30 ? 10 : -10) +
+            (humidity <= 65 ? 5 : -5) -
+            (pm25 > 55 ? 10 : 0) -
+            (uv > 7 ? 8 : 0),
+        ),
+      },
+      {
+        name: 'Outdoor Sports',
+        score: score(
+          (temp >= 18 && temp <= 30 ? 8 : -8) + (wind <= 25 ? 3 : -5) -
+            (uv > 8 ? 10 : uv > 6 ? 5 : 0),
+        ),
+      },
+      {
+        name: 'Photography',
+        score: score(
+          (current.cloud_cover >= 20 && current.cloud_cover <= 80 ? 8 : 0) +
+            (uv >= 3 && uv <= 7 ? 5 : 0),
+        ),
+      },
+    ];
+  };
+
+  const estimateDryingTimeHours = () => {
+    const current = weatherData?.current;
+    if (!current || !weatherData?.hourly) return null;
+
+    const avgHum =
+      weatherData.hourly.relative_humidity_2m.slice(0, 12).reduce((a, b) => a + b, 0) /
+      12;
+    const avgUV =
+      weatherData.hourly.uv_index?.slice(0, 12).reduce((a, b) => a + b, 0) / 12 || 0;
+
+    const temp = current.temperature_2m;
+    const wind = current.wind_speed_10m;
+
+    let base = 6;
+
+    if (avgHum >= 80) base += 4;
+    else if (avgHum >= 60) base += 2;
+    else if (avgHum <= 40) base -= 1;
+
+    if (temp >= 32) base -= 2;
+    else if (temp >= 26) base -= 1;
+    else if (temp <= 18) base += 2;
+
+    if (wind >= 15) base -= 1;
+    else if (wind <= 4) base += 1;
+
+    // UV index helps drying - higher UV = faster drying
+    if (avgUV >= 6) base -= 1.5;
+    else if (avgUV >= 4) base -= 1;
+    else if (avgUV <= 2) base += 0.5;
+
+    base = Math.max(2, Math.min(18, base));
+    return Math.round(base);
+  };
+
+  const getProductivityWindow = () => {
+    const series = getHourlyComfortSeries();
+    if (!series.length) return null;
+
+    const lateMorning = series.filter((h) => h.hour >= 9 && h.hour <= 12);
+    const afternoon = series.filter((h) => h.hour >= 14 && h.hour <= 18);
+
+    const avgComfort = (arr) =>
+      arr.length ? arr.reduce((s, h) => s + h.comfort, 0) / arr.length : 0;
+
+    const lm = avgComfort(lateMorning);
+    const af = avgComfort(afternoon);
+
+    if (!lm && !af) return null;
+
+    // Calculate mood/productivity score based on comfort, temperature stability, and sunlight
+    const calculateMoodScore = (arr) => {
+      if (!arr.length) return 0;
+      const avgTemp = arr.reduce((s, h) => s + h.temperature, 0) / arr.length;
+      const tempStability = 100 - Math.max(0, arr.reduce((max, h) => 
+        Math.max(max, Math.abs(h.temperature - avgTemp)), 0) * 5);
+      const avgComfort = arr.reduce((s, h) => s + h.comfort, 0) / arr.length;
+      const sunlight = arr.reduce((s, h) => s + (h.uv || 0), 0) / arr.length;
+      
+      // Mood is better with stable temps, good comfort, and moderate sunlight
+      return Math.round((avgComfort * 0.5 + tempStability * 0.3 + Math.min(sunlight * 5, 20)) * 0.8);
+    };
+
+    const lmMood = calculateMoodScore(lateMorning);
+    const afMood = calculateMoodScore(afternoon);
+
+    let bestWindow, bestMood;
+    if (lm >= af && lmMood >= afMood) {
+      bestWindow = { label: 'Best focus window', time: '09:00 – 12:00', comfort: Math.round(lm) };
+      bestMood = lmMood;
+    } else {
+      bestWindow = { label: 'Best focus window', time: '14:00 – 18:00', comfort: Math.round(af) };
+      bestMood = afMood;
+    }
+
+    // Add mood prediction
+    let moodPrediction = '';
+    if (bestMood >= 70) moodPrediction = 'High energy & focus expected';
+    else if (bestMood >= 50) moodPrediction = 'Moderate productivity likely';
+    else moodPrediction = 'Lower energy - take breaks';
+
+    return {
+      ...bestWindow,
+      mood: bestMood,
+      moodPrediction: moodPrediction,
+    };
   };
 
   const styles = {
@@ -376,6 +700,12 @@ const SmartCityDashboard = () => {
 
   const current = weatherData?.current;
   const aqiLevel = airQuality?.current ? getAQILevel(airQuality.current.pm2_5) : null;
+  const indoorComfort = calculateIndoorComfort(current);
+  const activityScores = calculateActivityScores();
+  const lifeAssistantSuggestions = getLifeAssistantSuggestions();
+  const dryingTime = estimateDryingTimeHours();
+  const productivityWindow = getProductivityWindow();
+  const currentCity = indianCities.find((c) => c.name === selectedCity);
 
   return (
     <div style={styles.container}>
@@ -580,6 +910,265 @@ const SmartCityDashboard = () => {
               </ResponsiveContainer>
             </div>
           </div>
+
+          <div style={{ gridColumn: 'span 1' }}>
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <h3 style={styles.cardTitle}>
+                  <Thermometer style={{ width: '24px', height: '24px' }} />
+                  Indoor Comfort
+                </h3>
+              </div>
+              <p
+                style={{
+                  color: 'white',
+                  fontSize: '2.5rem',
+                  fontWeight: 'bold',
+                  marginBottom: '0.5rem',
+                }}
+              >
+                {indoorComfort.score}/100
+              </p>
+              <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.9rem' }}>
+                {indoorComfort.recommendation}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ gridColumn: 'span 1' }}>
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <h3 style={styles.cardTitle}>
+                  <Activity style={{ width: '24px', height: '24px' }} />
+                  Life Assistant
+                </h3>
+              </div>
+              {lifeAssistantSuggestions && lifeAssistantSuggestions.length > 0 ? (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                  {lifeAssistantSuggestions.map((sug, idx) => (
+                    <li
+                      key={idx}
+                      style={{
+                        marginBottom: '0.75rem',
+                        padding: '0.5rem 0.75rem',
+                        borderRadius: '0.5rem',
+                        backgroundColor: 'rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <p
+                        style={{
+                          color: 'white',
+                          fontWeight: '600',
+                          marginBottom: '0.15rem',
+                        }}
+                      >
+                        {sug.label}
+                      </p>
+                      <p
+                        style={{
+                          color: 'rgba(255,255,255,0.8)',
+                          fontSize: '0.8rem',
+                        }}
+                      >
+                        Around <strong>{sug.hour}</strong> (comfort {sug.comfort}
+                        /100)
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ color: 'rgba(255,255,255,0.7)' }}>
+                  Waiting for forecast to generate suggestions...
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div style={{ gridColumn: 'span 1' }}>
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <h3 style={styles.cardTitle}>
+                  <CloudRain style={{ width: '24px', height: '24px' }} />
+                  Clothes Drying Time
+                </h3>
+              </div>
+              {dryingTime ? (
+                <>
+                  <p
+                    style={{
+                      color: 'white',
+                      fontSize: '2rem',
+                      fontWeight: 'bold',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    ~{dryingTime} hours
+                  </p>
+                  <p
+                    style={{
+                      color: 'rgba(255,255,255,0.8)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    Estimate based on next 12 hours of humidity, current temperature,
+                    and wind speed.
+                  </p>
+                </>
+              ) : (
+                <p style={{ color: 'rgba(255,255,255,0.7)' }}>
+                  Waiting for forecast data...
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div style={{ gridColumn: 'span 2' }}>
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <h3 style={styles.cardTitle}>
+                  <Activity style={{ width: '24px', height: '24px' }} />
+                  Outdoor Activity Suitability
+                </h3>
+              </div>
+              {activityScores && activityScores.length > 0 ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                    gap: '0.75rem',
+                  }}
+                >
+                  {activityScores.map((act) => (
+                    <div
+                      key={act.name}
+                      style={{
+                        backgroundColor: 'rgba(255,255,255,0.08)',
+                        borderRadius: '0.75rem',
+                        padding: '0.75rem',
+                        textAlign: 'center',
+                      }}
+                    >
+                      <p
+                        style={{
+                          color: 'rgba(255,255,255,0.8)',
+                          fontSize: '0.8rem',
+                          marginBottom: '0.35rem',
+                        }}
+                      >
+                        {act.name}
+                      </p>
+                      <p
+                        style={{
+                          color: 'white',
+                          fontWeight: 'bold',
+                          fontSize: '1.4rem',
+                        }}
+                      >
+                        {act.score}
+                      </p>
+                      <div style={styles.progressBar}>
+                        <div
+                          style={{
+                            ...styles.progressFill,
+                            width: `${act.score}%`,
+                            backgroundColor:
+                              act.score >= 80
+                                ? '#22c55e'
+                                : act.score >= 60
+                                ? '#eab308'
+                                : '#f97316',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ color: 'rgba(255,255,255,0.7)' }}>
+                  Waiting for current conditions...
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div style={{ gridColumn: 'span 1' }}>
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <h3 style={styles.cardTitle}>
+                  <Sun style={{ width: '24px', height: '24px' }} />
+                  Productivity Predictor
+                </h3>
+              </div>
+              {productivityWindow ? (
+                <>
+                  <p
+                    style={{
+                      color: 'white',
+                      fontSize: '1.2rem',
+                      fontWeight: 'bold',
+                      marginBottom: '0.25rem',
+                    }}
+                  >
+                    {productivityWindow.label}
+                  </p>
+                  <p
+                    style={{
+                      color: 'rgba(255,255,255,0.9)',
+                      marginBottom: '0.25rem',
+                    }}
+                  >
+                    {productivityWindow.time}
+                  </p>
+                  <p
+                    style={{
+                      color: 'rgba(255,255,255,0.8)',
+                      fontSize: '0.85rem',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    Weather comfort: {productivityWindow.comfort}/100
+                  </p>
+                  {productivityWindow.moodPrediction && (
+                    <>
+                      <p
+                        style={{
+                          color: 'rgba(255,255,255,0.9)',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          marginBottom: '0.25rem',
+                        }}
+                      >
+                        Mood & Energy: {productivityWindow.mood}/100
+                      </p>
+                      <p
+                        style={{
+                          color: 'rgba(255,255,255,0.8)',
+                          fontSize: '0.85rem',
+                          fontStyle: 'italic',
+                        }}
+                      >
+                        {productivityWindow.moodPrediction}
+                      </p>
+                    </>
+                  )}
+                </>
+              ) : (
+                <p style={{ color: 'rgba(255,255,255,0.7)' }}>
+                  Will suggest a focus window once data loads.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={styles.maxWidth}>
+        <div style={styles.card}>
+          <CrowdReports
+            city={selectedCity}
+            lat={currentCity?.lat}
+            lon={currentCity?.lon}
+          />
         </div>
       </div>
 
